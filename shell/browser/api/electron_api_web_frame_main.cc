@@ -318,14 +318,11 @@ std::vector<content::RenderFrameHost*> WebFrameMain::Frames() const {
   if (!CheckRenderFrame())
     return frame_hosts;
 
-  render_frame_->ForEachRenderFrameHost(base::BindRepeating(
-      [](std::vector<content::RenderFrameHost*>* frame_hosts,
-         content::RenderFrameHost* current_frame,
-         content::RenderFrameHost* rfh) {
-        if (rfh->GetParent() == current_frame)
-          frame_hosts->push_back(rfh);
-      },
-      &frame_hosts, render_frame_));
+  render_frame_->ForEachRenderFrameHost(
+      [&frame_hosts, this](content::RenderFrameHost* rfh) {
+        if (rfh->GetParent() == render_frame_)
+          frame_hosts.push_back(rfh);
+      });
 
   return frame_hosts;
 }
@@ -335,10 +332,10 @@ std::vector<content::RenderFrameHost*> WebFrameMain::FramesInSubtree() const {
   if (!CheckRenderFrame())
     return frame_hosts;
 
-  render_frame_->ForEachRenderFrameHost(base::BindRepeating(
-      [](std::vector<content::RenderFrameHost*>* frame_hosts,
-         content::RenderFrameHost* rfh) { frame_hosts->push_back(rfh); },
-      &frame_hosts));
+  render_frame_->ForEachRenderFrameHost(
+      [&frame_hosts](content::RenderFrameHost* rfh) {
+        frame_hosts.push_back(rfh);
+      });
 
   return frame_hosts;
 }
