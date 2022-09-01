@@ -173,31 +173,48 @@ class ScriptExecutionCallback {
     }
   }
 
-  void Completed(absl::optional<base::Value> result,
+  void Completed(const blink::WebVector<v8::Local<v8::Value>>& result,
                  base::TimeTicks start_time) {
     v8::Isolate* isolate = promise_.isolate();
-    if (result) {
-      v8::Local<v8::Value> value = gin::ConvertToV8(isolate, result.value());
-      // Either the result was created in the same world as the caller
-      // or the result is not an object and therefore does not have a
-      // prototype chain to protect
-      bool should_clone_value =
-          !(value->IsObject() &&
-            promise_.GetContext() ==
-                value.As<v8::Object>()->GetCreationContextChecked()) &&
-          value->IsObject();
-      if (should_clone_value) {
-        CopyResultToCallingContextAndFinalize(isolate, value.As<v8::Object>());
+    if (!result.empty()) {
+      if (!result[0].IsEmpty()) {
+        v8::Local<v8::Value> value = result[0];
+        // Either the result was created in the same world as the caller
+        // or the result is not an object and therefore does not have a
+        // prototype chain to protect
+        bool should_clone_value =
+            !(value->IsObject() &&
+              promise_.GetContext() ==
+                  value.As<v8::Object>()->GetCreationContextChecked()) &&
+            value->IsObject();
+        if (should_clone_value) {
+          CopyResultToCallingContextAndFinalize(isolate,
+                                                value.As<v8::Object>());
+        } else {
+          // Right now only single results per frame is supported.
+          if (callback_)
+            std::move(callback_).Run(value, v8::Undefined(isolate));
+          promise_.Resolve(value);
+        }
       } else {
-        // Right now only single results per frame is supported.
-        if (callback_)
-          std::move(callback_).Run(value, v8::Undefined(isolate));
-        promise_.Resolve(value);
+        const char error_message[] =
+            "Script failed to execute, this normally means an error "
+            "was thrown. Check the renderer console for the error.";
+        if (!callback_.is_null()) {
+          v8::Local<v8::Context> context = promise_.GetContext();
+          v8::Context::Scope context_scope(context);
+          std::move(callback_).Run(
+              v8::Undefined(isolate),
+              v8::Exception::Error(
+                  v8::String::NewFromUtf8(isolate, error_message)
+                      .ToLocalChecked()));
+        }
+        promise_.RejectWithErrorMessage(error_message);
       }
     } else {
       const char error_message[] =
-          "Script failed to execute, this normally means an error "
-          "was thrown. Check the renderer console for the error.";
+          "WebFrame was removed before script could run. This normally means "
+          "the underlying frame was destroyed";
       if (!callback_.is_null()) {
         v8::Local<v8::Context> context = promise_.GetContext();
         v8::Context::Scope context_scope(context);
@@ -635,7 +652,6 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
         base::BindOnce(&ScriptExecutionCallback::Completed,
                        base::Unretained(self)),
         blink::BackForwardCacheAware::kAllow,
-        blink::mojom::WantResultOption::kWantResult,
         blink::mojom::PromiseResultOption::kAwait);
 
     return handle;
@@ -716,7 +732,6 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
         base::BindOnce(&ScriptExecutionCallback::Completed,
                        base::Unretained(self)),
         blink::BackForwardCacheAware::kPossiblyDisallow,
-        blink::mojom::WantResultOption::kWantResult,
         blink::mojom::PromiseResultOption::kAwait);
 
     return handle;
